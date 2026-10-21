@@ -37,15 +37,16 @@ the conversation for follow-ups.
   well be on around now — check the programme") instead of asserting dates
   from memory. Sunny's `get_attractions` tool returns the same events
   field mid-chat.
-- **Real dated listings (optional)** — set `SERPAPI_API_KEY` and the server
-  pulls live event data for the city (SerpApi free tier, recurring monthly,
-  stretched by the 10-minute cache). It tries the structured
-  `google_events` panel first and falls back to a plain Google search for
+- **Real dated listings via SearchApi (optional)**: set `SEARCHAPI_API_KEY`
+  and the server pulls live event data for the city from
+  [SearchApi](https://www.searchapi.io/). It tries the structured Google
+  Events engine first and falls back to a plain Google search for
   "<city> events <month year>", whose organic snippets (venue calendars,
   ticket sites) carry real dates. Either way the model may only state
-  dates a listing itself carries — matching events get their own
-  Activities bullet with time and place; the rest are skipped. Degrades to
-  nothing without the key.
+  dates a listing itself carries: matching events get their own
+  Activities bullet with time and place, the rest are skipped. Degrades to
+  nothing without the key. Details in
+  [SearchApi integration](#searchapi-integration).
 - **Date range: today → +5 days.** This is a hard limit, not an oversight —
   it matches exactly what OpenWeatherMap's free "5 day / 3 hour forecast"
   plan exposes. There is no free daily forecast beyond that horizon, so
@@ -131,20 +132,20 @@ It also has:
          v                     v                     v
 +-----------------+   +-----------------+   +-----------------+
 | OpenWeatherMap  |   | Geoapify + Wiki |   | Groq            |
-| 5-day/3-hour    |   | + SerpApi       |   | LLM chat        |
+| 5-day/3-hour    |   | + SearchApi     |   | LLM chat        |
 | forecast        |   | (POIs + events) |   | (streamed)      |
 +-----------------+   +-----------------+   +-----------------+
 ```
 
 The upstream API keys (`OPENWEATHER_API_KEY`, `GROQ_API_KEY`,
-`GEOAPIFY_API_KEY`, `SERPAPI_API_KEY`) live only in the server-side `.env`
+`GEOAPIFY_API_KEY`, `SEARCHAPI_API_KEY`) live only in the server-side `.env`
 file, read once at startup by `server/src/index.js`. The browser never sees them — every
 upstream call is made from the Express server, and the client only ever
 talks to `/api/*` on the same origin (proxied to `:3001` in dev).
 Wikivoyage needs no key at all. Geoapify is only called when a request sets
 `traveling: true` — the "Include local attractions" checkbox on the form.
 Wikivoyage is also consulted (keylessly) for the events extraction whenever
-activity ideas are on, and SerpApi — when its key is set — for live dated
+activity ideas are on, and SearchApi, when its key is set, for live dated
 listings at the same moments.
 
 Workspace layout:
@@ -152,9 +153,51 @@ Workspace layout:
 ```
 .
 ├── client/   React + Vite UI (day form, weather card, streaming panel, Sunny chat)
-├── server/   Express API: routes, validation, forecast fetch+cache, Groq streaming, POI lookup
+├── server/   Express API: routes, validation, forecast fetch+cache, Groq streaming, POI + SearchApi events lookup
 └── shared/   Profile enums (@weather/shared) imported by both client and server
 ```
+
+## SearchApi integration
+
+Live, dated event listings come from [SearchApi](https://www.searchapi.io/),
+in [`server/src/events.js`](server/src/events.js). It is optional: without
+`SEARCHAPI_API_KEY` the lookup is skipped and the rest of the app works the
+same.
+
+One lookup, per city and month:
+
+1. **Google Events first.** `GET https://www.searchapi.io/api/v1/search`
+   with `engine=google_events`, `q=Events in <city>`, `gl=<country code>`
+   (from the forecast's city) and `hl=en`, the only language this engine
+   accepts. Up to 8 items from the `events` array become
+   `{title, when, venue}`:
+   - `when` is `start_time` (`"Aug 26, 7:00 PM"`, absolute), falling back
+     to `date`, which can be relative (`"Tomorrow"`).
+   - `venue` is `venue`, falling back to `address` (a city or
+     neighbourhood).
+   - The mapping follows SearchApi's 2026-08 response format, where `date`
+     and `venue` are plain strings. A field of any other type maps to `""`.
+2. **Plain Google search as a fallback.** When Google shows no events
+   panel for the city, one more call with `engine=google` and
+   `q=<city> events <Month YYYY>`. Up to 6 `organic_results` with a snippet
+   become `{title, snippet}`; venue calendars and ticket sites put real
+   dates in those snippets.
+3. **Into the prompt.** The listings reach the model in their own block,
+   and the system prompt allows only dates a listing itself states. Sunny's
+   `get_attractions` chat tool returns the same listings as `liveEvents`.
+
+Behaviour around it:
+
+- **Auth:** the key is sent as `Authorization: Bearer <key>`, never in the
+  query string, so it cannot leak through URLs or logs.
+- **Cache:** results are kept for 10 minutes per city and month, and
+  concurrent requests share one upstream call.
+- **Failures:** a non-200 answer (bad key, used-up quota) or a 5-second
+  timeout is logged and treated as "no listings". After a failure the
+  fallback search is skipped, since the same key would fail again and
+  waste a billable request. Failures are never cached, so the next request
+  retries.
+- **Cost:** a lookup costs one request, or two when the fallback runs.
 
 ## Design
 
@@ -182,10 +225,12 @@ Workspace layout:
     the real-attractions list in traveling mode; the app works fully
     without it — leave `GEOAPIFY_API_KEY` empty and traveling mode falls
     back to Wikivoyage guide notes (keyless) plus the LLM's own knowledge.
-  - **SerpApi** (optional) — <https://serpapi.com/>. Powers live, dated
-    Google Events listings in the Activities section; free tier is 100
-    searches/month, recurring. Leave `SERPAPI_API_KEY` empty and the app
-    still surfaces guide-derived (undated) festival mentions keylessly.
+  - **SearchApi** (optional): sign up at
+    <https://www.searchapi.io/users/sign_up> (no credit card), then copy
+    the API key from your SearchApi dashboard. Powers live, dated Google
+    Events listings in the Activities section; sign-up comes with 100 free
+    requests. Leave `SEARCHAPI_API_KEY` empty and the app still surfaces
+    guide-derived (undated) festival mentions keylessly.
 
 ## Setup
 
@@ -199,7 +244,7 @@ cp .env.example .env       # then fill in your keys
 `.env.example` (repo root) lists the variables to fill in:
 `OPENWEATHER_API_KEY` and `GROQ_API_KEY` (required), `GROQ_MODEL` (optional,
 defaults to `llama-3.3-70b-versatile`), `GEOAPIFY_API_KEY` (optional POI
-grounding) and `SERPAPI_API_KEY` (optional live event listings — both
+grounding) and `SEARCHAPI_API_KEY` (optional live event listings; both
 degrade silently to nothing when empty), plus `PORT` (defaults to `3001`).
 
 `.env` is git-ignored — never commit real keys.
@@ -227,11 +272,11 @@ Testing Library/jsdom) via `npm run test --workspaces --if-present` (the
 `--if-present` flag skips the `shared` workspace, which has no test script
 of its own):
 
-- **Server** — 159 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
+- **Server** — 163 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
   `validate`, `weather`, and `routes` test files.
 - **Client** — 36 tests across `api`, `WeatherCard`, `Recommendation`,
   `WeatherForm`, `ChatPanel`, `ProfileChips`, and `App` test files.
-- **195 tests total.**
+- **199 tests total.**
 
 The suite is **fully offline and needs no API keys**: every upstream call
 (`fetch` to OpenWeatherMap/Geoapify/Wikivoyage, the `groq-sdk` client) is

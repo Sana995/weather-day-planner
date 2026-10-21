@@ -62,7 +62,7 @@ function eventsBlock(events) {
     `${events}\n`;
 }
 
-// Live results via SerpApi — either structured events-panel listings
+// Live results via SearchApi: either structured events-panel listings
 // ({title, when, venue}) or raw search snippets ({title, snippet}) whose
 // text carries the dates. Real either way; dated only where stated.
 function liveEventsBlock(liveEvents) {
