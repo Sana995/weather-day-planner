@@ -1,0 +1,835 @@
+/* ============================================================================
+   Personal Weather Assistant — soft-daylight dashboard
+   A periwinkle sky fading to almost-white, with the work floating on it as
+   white cards. Navy sets the headings, slate sets the prose, and colour is
+   spent only where it carries data: chips for a reading, one blue gradient
+   for a quantity. Nothing shouts; the advice is the loudest thing on screen.
+   ========================================================================= */
+
+:root {
+  /* Sky — the backdrop, top to bottom */
+  --sky-1: #AEC3F0;
+  --sky-2: #C7D4F4;
+  --sky-3: #DEE5F8;
+  --sky-4: #EDF0FB;
+
+  /* Surfaces */
+  --surface: #FFFFFF;
+  --surface-sunk: #F4F7FE; /* tiles and quiet blocks inside a card */
+  --line: #D9DFEE;
+  --line-soft: #E8EDF9;
+
+  /* Ink — no pure black anywhere */
+  --ink: #171E32;          /* headings, numerals            16.6:1 on white */
+  --ink-2: #39435C;        /* the only ink placed on sky      5.6:1 on sky-1 */
+  --slate: #5A6478;        /* body                            6.0:1 on white */
+  --slate-soft: #6D7689;   /* placeholders, small meta        4.6:1 on white */
+
+  /* Accents — each one is a data colour, not a brand colour */
+  --accent: #3B5BC7;
+  --accent-wash: #E3EAFB;
+  --meter-1: #BED2F8;      /* bar fills: nothing sits on top, so they carry */
+  --meter-2: #3B5BC7;      /* the full range                                */
+  --meter-wash-1: #E7EEFD; /* fills that run behind a label stop early, so  */
+  --meter-wash-2: #D5E1FB; /* the label keeps 4.56:1 at the deepest end     */
+  --mint: #DFF3E8;
+  --mint-ink: #37734F;     /* a shade under the reference's, to clear 4.5:1 */
+  --rose: #FBE9EC;
+  --rose-ink: #9B2F47;
+
+  /* Radii — paper on water: soft everywhere, fully round on actions */
+  --r-card: 24px;
+  --r-inner: 16px;
+  --r-field: 13px;
+  --r-pill: 999px;
+
+  /* Shadows — offset and blur, never a flat halo */
+  --shadow-card:
+    0 1px 2px rgb(23 30 50 / 0.04),
+    0 14px 30px -16px rgb(23 30 50 / 0.20);
+  --shadow-lift:
+    0 2px 6px rgb(23 30 50 / 0.06),
+    0 20px 38px -18px rgb(23 30 50 / 0.28);
+  --shadow-pill:
+    0 1px 2px rgb(23 30 50 / 0.12),
+    0 10px 20px -10px rgb(23 30 50 / 0.45);
+  --shadow-chip: 0 1px 2px rgb(23 30 50 / 0.06), 0 6px 14px -10px rgb(23 30 50 / 0.35);
+
+  /* Spacing */
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --s7: 3rem;
+  --s8: 4rem;
+
+  --measure: 68ch;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --face: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Arial, sans-serif;
+
+  color-scheme: light;
+  accent-color: var(--accent);
+  font-family: var(--face);
+  -webkit-text-size-adjust: 100%;
+}
+
+* { box-sizing: border-box; }
+
+/* The sky is fixed to the viewport so a long answer scrolls over it rather
+   than dragging the gradient along, and short pages never band. */
+html {
+  background-color: var(--sky-4);
+  background-image: linear-gradient(
+    180deg,
+    var(--sky-1) 0%,
+    var(--sky-2) 22%,
+    var(--sky-3) 52%,
+    var(--sky-4) 78%
+  );
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: transparent;
+  color: var(--slate);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The ribbed sheen across the top band. Fixed, so it never shimmers under
+   scroll, and masked out before it reaches the reading area. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 44vh;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgb(255 255 255 / 0.20) 0 1px,
+    rgb(255 255 255 / 0) 1px 8px
+  );
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, rgb(0 0 0 / 0) 100%);
+  mask-image: linear-gradient(180deg, #000 0%, rgb(0 0 0 / 0) 100%);
+  pointer-events: none;
+}
+
+/* --- Browser surfaces, themed from the palette ---------------------------- */
+
+::selection { background: var(--accent-wash); color: var(--ink); }
+
+/* The outline follows each element's own radius, so nothing is re-shaped here. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+:where(input, textarea) { caret-color: var(--accent); }
+
+.hourly { scrollbar-width: thin; scrollbar-color: #C3CFEA transparent; }
+.hourly::-webkit-scrollbar { height: 8px; }
+.hourly::-webkit-scrollbar-track { background: transparent; }
+.hourly::-webkit-scrollbar-thumb { background: #C3CFEA; border-radius: var(--r-pill); }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- Shell ---------------------------------------------------------------- */
+
+.app {
+  position: relative;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: clamp(var(--s5), 4vw, var(--s7)) clamp(var(--s4), 4vw, var(--s6)) var(--s8);
+}
+
+/* --- Header: the only type set directly on the sky ------------------------ */
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4) var(--s5);
+}
+
+.app-header h1 {
+  margin: 0;
+  max-width: 18ch;
+  color: var(--ink);
+  font-size: clamp(1.85rem, 1.2rem + 2.2vw, 2.6rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+}
+
+.tagline {
+  margin: var(--s2) 0 0;
+  max-width: 42ch;
+  color: var(--ink-2);
+  font-size: 1rem;
+}
+
+/* --- Chips: one shape, four readings -------------------------------------- */
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0; /* a chip is also used standalone, outside a .chip-row list */
+  padding: 0.36rem 0.75rem;
+  border-radius: var(--r-pill);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chip-blue { background: var(--accent-wash); color: var(--accent); }
+.chip-mint { background: var(--mint); color: var(--mint-ink); }
+
+/* On the sky the chip has to be its own surface, so it carries the card's
+   shadow at chip scale rather than a border. */
+.chip-sky {
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-chip);
+}
+
+/* Reads its own value: the fill runs to --pop percent behind the label. */
+.chip-meter {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.chip-meter::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  width: calc(var(--pop, 0) * 1%);
+  background: linear-gradient(90deg, var(--meter-wash-1), var(--meter-wash-2));
+}
+
+/* --- Two columns: the request beside the answer --------------------------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s5);
+  margin-top: var(--s6);
+}
+
+@media (min-width: 62rem) {
+  .layout {
+    /* Wide enough that City and Date pair inside the rail: a fully stacked
+       form pushes its own submit button past the fold on a 900px screen. */
+    grid-template-columns: 23rem minmax(0, 1fr);
+    gap: var(--s6);
+    align-items: start;
+  }
+  .layout > .rail { position: sticky; top: var(--s5); }
+}
+
+.rail { min-width: 0; }
+.results { min-width: 0; }
+.results > * + * { margin-top: var(--s5); }
+.status-region:empty { display: none; }
+/* Only when the hidden region is what the column starts with: after an error
+   block, the next card still owes that error its gap. */
+.status-region:empty:first-child + * { margin-top: 0; }
+
+/* --- Cards: paper on water ------------------------------------------------ */
+
+.card {
+  padding: clamp(var(--s5), 2.2vw, 1.75rem);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  animation: rise 460ms var(--ease) both;
+}
+
+/* The one authored moment: a card settles onto the sky as it arrives. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.card-title {
+  margin: 0 0 var(--s4);
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+/* --- The request form ----------------------------------------------------- */
+
+form.panel { margin: 0; }
+
+.field { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: var(--s4); }
+
+.field label {
+  color: var(--slate);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.chat-input input,
+.field input,
+.field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.85rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-field);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.98rem;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+
+.chat-input input::placeholder,
+.field input::placeholder { color: var(--slate-soft); }
+
+.chat-input input:hover,
+.field input:hover,
+.field select:hover { border-color: #C4CDE4; }
+
+/* The focus ring is the navy outline; the wash under it is what makes the
+   field itself look awake. */
+.chat-input input:focus-visible,
+.field input:focus-visible,
+.field select:focus-visible {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 4px rgb(59 91 199 / 0.14);
+}
+
+.field select {
+  appearance: none;
+  padding-right: 2.1rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%235A6478' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.85rem;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.field input[type='date']::-webkit-calendar-picker-indicator {
+  filter: grayscale(1) brightness(0.55);
+  cursor: pointer;
+}
+
+.field-row {
+  display: grid;
+  /* City and the date inputs pair up from 360px; below ~320px they stack. */
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--s3) var(--s4);
+  margin-bottom: var(--s4);
+}
+
+/* The profile selects are the only fields whose values are long ("hiking &
+   outdoors"), so they alone hold out for a wider track before pairing. */
+.profile-row { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+
+/* The row's own gap spaces the fields; the field margin would double it. */
+.field-row .field { margin-bottom: 0; }
+
+/* Three fields in a two-track row leave the last one stranded beside an empty
+   cell — at 390px that is End date at half width. Let it take the row. */
+.field-row > .field:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+.field-hint { color: var(--slate-soft); font-size: 0.85rem; margin: 0.35rem 0 0; }
+
+.field-check { display: flex; gap: 0.5rem; align-items: center; margin: 0.75rem 0 0; cursor: pointer; }
+
+/* --- Primary action ------------------------------------------------------- */
+
+.form-submit { margin-top: var(--s5); }
+
+button.primary {
+  display: block;
+  width: 100%;
+  padding: 0.85rem 1.5rem;
+  min-height: 3rem;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--surface);
+  font: inherit;
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  box-shadow: var(--shadow-pill);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), background 180ms var(--ease);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #202944;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+button.primary:active:not(:disabled) { transform: translateY(0); box-shadow: var(--shadow-pill); }
+
+button.primary:disabled {
+  background: #9BA4B8;
+  box-shadow: none;
+  transform: none;
+  cursor: not-allowed;
+}
+
+/* The press produces something visible right where the thumb already is. */
+.form-progress {
+  display: block;
+  height: 0.3rem;
+  margin-top: var(--s3);
+  border-radius: var(--r-pill);
+  background-color: var(--surface-sunk);
+  background-image: linear-gradient(90deg, var(--meter-1), var(--meter-2), var(--meter-1));
+  background-repeat: no-repeat;
+  background-size: 45% 100%;
+  animation: sweep 1.5s var(--ease) infinite;
+}
+
+@keyframes sweep {
+  from { background-position: -50% 0; }
+  to { background-position: 150% 0; }
+}
+
+/* --- Conditions ----------------------------------------------------------- */
+
+.weather-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s3);
+}
+
+/* Place and date are one sentence, so they set on one line — broken in two,
+   the date's leading em dash reads as a stray mark. */
+.weather-place {
+  color: var(--slate);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  text-wrap: pretty;
+}
+
+.weather-place strong {
+  margin-right: 0.15rem;
+  color: var(--ink);
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* Proportional figures: this is the friendly numeral of the design, not a
+   column of data, and Jakarta's tabular cut sets it narrower and colder. */
+.weather-summary .temp {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(2.6rem, 1.6rem + 4vw, 3.6rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.weather-summary .temp .unit {
+  font-size: 0.3em;
+  font-weight: 500;
+  letter-spacing: 0;
+  vertical-align: 0.95em;
+  color: var(--slate);
+}
+
+.weather-summary .desc {
+  color: var(--slate);
+  font-size: 1.02rem;
+  font-weight: 500;
+}
+
+/* Wide cards set the reading against the number instead of under it. */
+@media (min-width: 30rem) {
+  .weather-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      'place place'
+      'temp  desc'
+      'temp  chips';
+    column-gap: var(--s5);
+    row-gap: var(--s2);
+    align-items: center;
+  }
+  .weather-place { grid-area: place; }
+  .weather-summary .temp { grid-area: temp; align-self: center; }
+  .weather-summary .desc { grid-area: desc; align-self: end; }
+  .weather-summary .chip-row { grid-area: chips; align-self: start; }
+}
+
+/* --- Hourly: quiet tiles, never cards inside a card ----------------------- */
+
+.hourly {
+  display: flex;
+  gap: var(--s2);
+  margin-top: var(--s5);
+  padding-bottom: var(--s2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+/* Tiles keep their own size and the strip scrolls: growing them would turn a
+   one-entry day (a late lookup returns a single 3-hour slot) into one tile
+   stretched across the whole card. */
+.hourly .slot {
+  flex: 0 0 auto;
+  min-width: 5.75rem;
+  max-width: 8.5rem;
+  padding: var(--s3);
+  border-radius: var(--r-inner);
+  background: var(--surface-sunk);
+  color: var(--slate);
+  font-size: 0.8rem;
+}
+
+.hourly .slot-time {
+  color: var(--slate); /* --slate-soft is only 4.25:1 on the tinted tile */
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hourly .slot strong {
+  display: block;
+  margin: 0.15rem 0 0.25rem;
+  color: var(--ink);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.hourly .slot-desc { line-height: 1.35; }
+
+/* Rain chance for the slot, as a fill on a hatched track — the strip's one
+   piece of secondary data, carried by pattern rather than another number. */
+.slot-rain {
+  height: 0.375rem;
+  margin-top: var(--s2);
+  border-radius: var(--r-pill);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #C3CFEA 0 2px,
+    rgb(195 207 234 / 0) 2px 5px
+  );
+}
+
+.slot-rain span {
+  display: block;
+  height: 100%;
+  width: calc(var(--pop, 0) * 1%);
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--meter-1), var(--meter-2));
+}
+
+/* --- The advice — the product, so it gets the reading scale --------------- */
+
+.answer > :where(p, ul, ol, blockquote) { max-width: var(--measure); }
+
+/* Outfit / Activities / Tips are how the answer is scanned, so they step
+   clear of the prose on size as well as weight and colour. */
+.answer :where(h1, h2, h3, h4) {
+  max-width: var(--measure);
+  margin: var(--s6) 0 var(--s3);
+  color: var(--ink);
+  font-size: clamp(1.2rem, 1.05rem + 0.6vw, 1.45rem);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.018em;
+}
+
+.answer > :first-child { margin-top: 0; }
+
+.answer p,
+.answer li { color: var(--slate); font-size: 1rem; line-height: 1.7; }
+
+.answer p { margin: 0 0 var(--s4); }
+
+.answer ul,
+.answer ol { margin: 0 0 var(--s4); padding-left: 0; list-style: none; }
+
+.answer li {
+  position: relative;
+  padding-left: 1.85rem;
+  margin-bottom: var(--s2);
+}
+
+/* A real bullet — a solid accent dot, sized to the text and centred on the
+   first line. A checkbox shape would promise an interaction that never comes. */
+.answer ul > li::before {
+  content: '';
+  position: absolute;
+  left: 0.33rem;
+  top: 0.62em;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+.answer ol { counter-reset: item; }
+.answer ol > li { counter-increment: item; }
+
+.answer ol > li::before {
+  content: counter(item);
+  position: absolute;
+  left: 0;
+  top: 0.1em;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: var(--r-pill);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.answer strong { color: var(--ink); font-weight: 600; }
+
+.answer em { color: var(--slate); font-style: italic; }
+
+.answer code {
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  background: var(--surface-sunk);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  color: var(--ink-2);
+}
+
+.answer blockquote {
+  margin: var(--s4) 0;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r-inner);
+  background: var(--surface-sunk);
+  color: var(--slate);
+}
+
+.answer hr { border: none; border-top: 1px solid var(--line-soft); margin: var(--s5) 0; }
+
+/* The profile that produced this answer, stated before it. */
+.profile-chips {
+  margin-bottom: var(--s5);
+  padding-bottom: var(--s4);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* A filled pill, not an outlined one: on a white card a hairline border is a
+   1.3:1 edge, and the row has to read as chips at a glance. */
+.chip-profile {
+  background: var(--surface-sunk);
+  color: var(--ink);
+}
+
+.chip-key {
+  color: var(--slate);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+/* Where the next word will land. */
+.cursor {
+  display: inline-block;
+  width: 0.45em;
+  height: 1.05em;
+  border-radius: 3px;
+  margin-left: 0.1em;
+  background: var(--accent);
+  vertical-align: -0.18em;
+  animation: caret 1.2s ease-in-out infinite;
+}
+
+@keyframes caret { 50% { opacity: 0.2; } }
+
+/* --- Status, error, empty ------------------------------------------------- */
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin: 0;
+  padding: var(--s4) var(--s5);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--slate);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.status-dots { display: inline-flex; gap: 0.3rem; }
+
+.status-dots span {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  animation: pulse 1.2s var(--ease) infinite;
+}
+
+.status-dots span:nth-child(2) { animation-delay: 0.15s; }
+.status-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes pulse {
+  0%, 60%, 100% { opacity: 0.28; transform: scale(0.8); }
+  30% { opacity: 1; transform: scale(1); }
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: var(--s4) var(--s5);
+  border-radius: var(--r-inner);
+  background: var(--rose);
+  color: var(--rose-ink);
+}
+
+.error-title { font-size: 0.82rem; font-weight: 600; }
+.error-msg { color: var(--ink); font-size: 1rem; }
+
+/* In the answer column the error floats on the sky, so it is a card like its
+   neighbours; inside a form it stays an inset block. */
+.results > .error {
+  padding: var(--s5);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+
+form.panel .error { margin-bottom: var(--s4); }
+
+.empty-lede {
+  margin: 0 0 var(--s3);
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.empty-body { margin: 0 0 var(--s5); max-width: 52ch; color: var(--slate); }
+
+.empty-list .chip { background: var(--surface-sunk); color: var(--slate); }
+
+/* --- Narrow: get the form and its action into the first screens ----------- */
+
+@media (max-width: 40rem) {
+  .app { padding-top: var(--s5); }
+  .app-header { gap: var(--s3); }
+  .app-header h1 { max-width: none; }
+  .tagline { font-size: 0.95rem; }
+
+  .layout { margin-top: var(--s5); }
+
+  .card { padding: var(--s5) var(--s4); }
+  .field { gap: 0.25rem; }
+  .form-submit { margin-top: var(--s4); }
+  .status { padding: var(--s4); }
+}
+
+/* --- Motion preferences --------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .cursor { opacity: 1; }
+  .status-dots span { opacity: 1; transform: none; }
+  button.primary:hover:not(:disabled) { transform: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* --- Print: the answer, on paper, without the machinery ------------------- */
+
+@media print {
+  html { background: #fff; }
+  body::before { display: none; }
+  .app { padding: 0; max-width: none; }
+  .rail, .status, .form-progress, .cursor { display: none; }
+  .layout { display: block; }
+  .card { box-shadow: none; padding: 0; animation: none; }
+  .results > * + * { margin-top: var(--s5); }
+}
+
+/* --- Follow-up chat: Sunny ------------------------------------------------ */
+
+/* Sunny's badge is the one warm accent in a cool palette — the assistant
+   reads as its own character without breaking the design's quiet. */
+.chat-title { display: flex; align-items: center; gap: 0.6rem; }
+
+.sunny-badge {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-pill);
+  background: linear-gradient(135deg, #FFD97A, #FFAB54);
+  color: #6E4310;
+  box-shadow: var(--shadow-chip);
+}
+
+.sunny-badge svg { width: 1.2rem; height: 1.2rem; }
+
+.chat-log { list-style: none; margin: 0 0 0.75rem; padding: 0; display: grid; gap: 0.5rem; }
+.chat-msg { padding: 0.55rem 0.85rem; border-radius: 0.9rem; max-width: 85%; overflow-wrap: anywhere; }
+.chat-msg.user { justify-self: end; background: var(--ink, #1b2340); color: #fff; }
+.chat-msg.assistant { justify-self: start; background: var(--surface-sunk, #eef1fb); }
+.chat-hint { color: var(--slate-soft, #66708c); margin: 0 0 0.75rem; }
+.chat-tool { margin: 0 0 0.5rem; }
+.chat-input { display: flex; gap: 0.5rem; }
+.chat-input input { flex: 1; }
+
+/* button.primary is a full-width block for the form-submit rows; in the chat's
+   flex row it must size to its label or it swallows the input. */
+.chat-input button.primary {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 2.85rem;
+  padding: 0.6rem 1.6rem;
+}
