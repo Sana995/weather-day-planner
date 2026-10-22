@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { dailyLimit, hasDailyBudget, takeDailyBudget, _resetDailyBudgets } from '../src/budget.js';
+import { dailyLimit, hasDailyBudget, takeDailyBudget, refundDailyBudget, _resetDailyBudgets } from '../src/budget.js';
 
 describe('daily budgets', () => {
   beforeEach(() => {
@@ -57,5 +57,17 @@ describe('daily budgets', () => {
     expect(takeDailyBudget('groq')).toBe(false);
     vi.setSystemTime(new Date('2026-10-22T00:00:01Z'));
     expect(takeDailyBudget('groq')).toBe(true);
+  });
+
+  it('refunds one call, never below zero', () => {
+    process.env.SEARCHAPI_DAILY_LIMIT = '1';
+    expect(takeDailyBudget('searchapi')).toBe(true);
+    expect(hasDailyBudget('searchapi')).toBe(false);
+    refundDailyBudget('searchapi');
+    expect(hasDailyBudget('searchapi')).toBe(true);
+    refundDailyBudget('searchapi');
+    refundDailyBudget('searchapi');
+    expect(takeDailyBudget('searchapi')).toBe(true);
+    expect(takeDailyBudget('searchapi')).toBe(false); // the extra refunds gave nothing extra
   });
 });

@@ -90,6 +90,24 @@ describe('createToolExecutor · get_attractions', () => {
     });
   });
 
+  it('does only one live-events lookup per chat turn, however many towns the model asks about', async () => {
+    getForecast.mockImplementation(async (city) => ({
+      city: { name: city, country: 'HR', coord: { lat: 45.8, lon: 15.7 } },
+      days: [{ date: '2026-08-08', condition: 'Clear' }],
+    }));
+    getAttractions.mockResolvedValue({ pois: [{ name: 'Castle' }], guide: '' });
+    getLiveEvents.mockResolvedValue([{ title: 'Wine fair', when: 'Sat', venue: '' }]);
+    const execute = createToolExecutor(CTX);
+    const results = [];
+    for (const city of ['Samobor', 'Karlovac', 'Varaždin']) results.push(JSON.parse(await execute('get_attractions', { city })));
+    expect(getLiveEvents).toHaveBeenCalledTimes(1);
+    expect(results.map((r) => r.liveEvents.length)).toEqual([1, 0, 0]);
+    expect(results.every((r) => r.pois.length === 1)).toBe(true); // the rest still answers
+    // A new chat request gets a new executor, and a new lookup.
+    await createToolExecutor(CTX)('get_attractions', { city: 'Rijeka' });
+    expect(getLiveEvents).toHaveBeenCalledTimes(2);
+  });
+
   it('returns the error message as a string when the city is unknown', async () => {
     getForecast.mockRejectedValue(new HttpError(404, 'City not found'));
     const result = await createToolExecutor(CTX)('get_attractions', { city: 'Xyzzyville' });

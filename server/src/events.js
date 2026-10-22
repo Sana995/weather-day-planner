@@ -9,7 +9,7 @@
 // venue}; snippet items as {title, snippet}. The prompt tells the model to
 // trust only dates the listing itself states.
 
-import { takeDailyBudget } from './budget.js';
+import { takeDailyBudget, refundDailyBudget } from './budget.js';
 import { cleanText } from './untrusted.js';
 
 const TTL_MS = 10 * 60 * 1000;
@@ -47,7 +47,9 @@ const SNIPPET_MAX = 300;
 // key rides in the Authorization header, so it never lands in a URL or a log.
 // hl is pinned to 'en', the only language google_events accepts. Every
 // request counts against the daily cap first; a used-up day is a failure like
-// any other, so it degrades to [] and is never cached.
+// any other, so it degrades to [] and is never cached. SearchApi does not bill
+// requests it answers with an HTTP error, so those are refunded; a timeout may
+// still have been billed, so it is not.
 async function searchApiGet(params, apiKey) {
   if (!takeDailyBudget('searchapi')) throw new Error('SearchApi daily limit reached');
   const qs = new URLSearchParams({ hl: 'en', ...params });
@@ -55,7 +57,10 @@ async function searchApiGet(params, apiKey) {
     headers: { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(5000),
   });
-  if (!res.ok) throw new Error(`SearchApi HTTP ${res.status}`);
+  if (!res.ok) {
+    refundDailyBudget('searchapi');
+    throw new Error(`SearchApi HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -67,18 +72,16 @@ function monthPhrase(date) {
   return `${d.toLocaleString('en', { month: 'long', timeZone: 'UTC' })} ${d.getUTCFullYear()}`;
 }
 
-// cleanText also turns a non-string field into ''.
-const str = (value, max) => cleanText(value, max);
-
 // SearchApi's 2026-08 google_events shape: date, start_time and venue are
 // plain strings. start_time ("Aug 26, 7:00 PM") is absolute, while date can
 // be relative ("Tomorrow"), so start_time wins; address only holds a city or
-// neighbourhood, so it is the venue of last resort.
+// neighbourhood, so it is the venue of last resort. cleanText also turns a
+// non-string field into ''.
 function toListing(e) {
   return {
-    title: str(e.title, TITLE_MAX),
-    when: str(e.start_time, WHEN_MAX) || str(e.date, WHEN_MAX),
-    venue: str(e.venue, VENUE_MAX) || str(e.address, VENUE_MAX),
+    title: cleanText(e.title, TITLE_MAX),
+    when: cleanText(e.start_time, WHEN_MAX) || cleanText(e.date, WHEN_MAX),
+    venue: cleanText(e.venue, VENUE_MAX) || cleanText(e.address, VENUE_MAX),
   };
 }
 
@@ -103,7 +106,7 @@ export async function getLiveEvents(cityName, country = '', date = '') {
 
       const search = await searchApiGet({ engine: 'google', q: `${cityName} events ${month}`.trim(), ...gl }, apiKey);
       return (Array.isArray(search.organic_results) ? search.organic_results : [])
-        .map((r) => ({ title: str(r?.title, TITLE_MAX), snippet: str(r?.snippet, SNIPPET_MAX) }))
+        .map((r) => ({ title: cleanText(r?.title, TITLE_MAX), snippet: cleanText(r?.snippet, SNIPPET_MAX) }))
         .filter((r) => r.title && r.snippet)
         .slice(0, 6);
     });

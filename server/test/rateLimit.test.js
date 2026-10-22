@@ -45,6 +45,35 @@ describe('rateLimit', () => {
     expect(hit(limiter, '203.0.113.7').outcome).toBe('next');
   });
 
+  it('sweeps expired clients once the map is big, at most once per window', () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const limiter = rateLimit({ limit: 5, windowMs: 60_000, sweepAt: 3 });
+    hit(limiter, '198.51.100.1'); // its window ends at +60s
+    now += 59_000;
+    hit(limiter, '198.51.100.2');
+    hit(limiter, '198.51.100.3');
+    hit(limiter, '198.51.100.4'); // 3 tracked: sweeps, but nothing has expired yet
+    expect(limiter.trackedClients()).toBe(4);
+    now += 2_000; // .1 has expired now...
+    hit(limiter, '198.51.100.5'); // ...but this window already had its sweep
+    expect(limiter.trackedClients()).toBe(5);
+    now += 60_000; // next window: every entry above has expired
+    hit(limiter, '198.51.100.6');
+    expect(limiter.trackedClients()).toBe(1);
+  });
+
+  it('keeps counting a live client through a sweep', () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const limiter = rateLimit({ limit: 1, windowMs: 60_000, sweepAt: 2 });
+    hit(limiter, '198.51.100.1');
+    now += 30_000;
+    hit(limiter, '198.51.100.2');
+    hit(limiter, '198.51.100.3'); // triggers a sweep: nothing expired
+    expect(hit(limiter, '198.51.100.2').outcome).toBeInstanceOf(HttpError);
+  });
+
   it('treats addresses in one IPv6 /64 as one client', () => {
     const limiter = rateLimit({ limit: 1, windowMs: 60_000 });
     expect(hit(limiter, '2001:db8:1:2::aaaa').outcome).toBe('next');

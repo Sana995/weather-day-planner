@@ -45,7 +45,14 @@ export const CHAT_TOOLS = [
 const argCity = (args, fallback) =>
   typeof args?.city === 'string' && args.city.trim() ? args.city.trim() : fallback;
 
+// One executor serves one chat request. get_attractions can run up to 9 times
+// in a turn (3 calls per round, 3 rounds), and each live-events lookup costs 1
+// or 2 SearchApi requests from a small daily pool, so only the first call in
+// a turn gets live listings; later ones still get POIs, the guide and events.
+const LIVE_LOOKUPS_PER_TURN = 1;
+
 export function createToolExecutor(context) {
+  let liveLookups = 0;
   return async function execute(name, args) {
     try {
       if (name === 'get_weather') {
@@ -62,7 +69,9 @@ export function createToolExecutor(context) {
         const [{ pois, guide }, events, liveEvents] = await Promise.all([
           getAttractions(cityInfo.name, cityInfo.coord, days[0].condition, context.activity),
           getCityEvents(cityInfo.name),
-          getLiveEvents(cityInfo.name, cityInfo.country, context.date),
+          liveLookups++ < LIVE_LOOKUPS_PER_TURN
+            ? getLiveEvents(cityInfo.name, cityInfo.country, context.date)
+            : [],
         ]);
         return JSON.stringify({ pois: pois.map((p) => p.name), guide, events, liveEvents });
       }

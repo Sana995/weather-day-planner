@@ -398,11 +398,32 @@ describe('rate limits', () => {
 });
 
 describe('request limits', () => {
-  it('answers a body over 64 KB with a JSON 413', async () => {
-    const body = JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(70 * 1024) }] });
+  it('answers a body over 160 KB with a JSON 413', async () => {
+    const body = JSON.stringify({ messages: [{ role: 'user', content: 'x'.repeat(170 * 1024) }] });
     const res = await request(createApp()).post('/api/chat').set('Content-Type', 'application/json').send(body);
     expect(res.status).toBe(413);
-    expect(res.body.error).toMatch(/too large/);
+    expect(res.body.error).toMatch(/too large \(limit 160 KB\)/);
+  });
+
+  it('accepts a full chat (20 messages of 2,000 characters) even in 3-byte characters', async () => {
+    getDailySummary.mockResolvedValue({ city: CITY, day: DAY });
+    streamChatWithTools.mockReturnValue((async function* () { yield { type: 'token', text: 'ok' }; })());
+    const content = '雨'.repeat(2000); // 3 bytes each in UTF-8
+    const messages = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'user' : 'assistant', content }));
+    const res = await request(createApp()).post('/api/chat')
+      .send({ context: { city: 'Zagreb', date: '2026-08-08' }, messages });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('event: done');
+  });
+
+  it('passes other body-parser client errors through, e.g. an unsupported charset as 415', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await request(createApp())
+      .post('/api/recommend').set('Content-Type', 'application/json; charset=latin1').send('{"city":"Zagreb"}');
+    expect(res.status).toBe(415);
+    expect(res.body.error).toMatch(/charset/i);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
   });
 
   it('answers a request with no JSON body with a 400 instead of a 500', async () => {

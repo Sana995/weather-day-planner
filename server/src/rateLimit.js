@@ -19,16 +19,20 @@ export function clientKey(ip = '') {
   return `${groups.slice(0, 4).map((g) => g.toLowerCase().replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
-// Expired windows are swept only once this many clients are tracked, so the
-// map stays bounded without a timer.
+// Expired windows are swept once this many clients are tracked, and at most
+// once per window: every entry expires within one window, so the map never
+// holds much more than two windows' worth of clients, and the O(n) sweep is
+// paid once per window instead of on every request.
 const SWEEP_AT = 10_000;
 
-export function rateLimit({ limit, windowMs }) {
+export function rateLimit({ limit, windowMs, sweepAt = SWEEP_AT }) {
   const hits = new Map(); // client key → { count, resetAt }
-  return (req, res, next) => {
+  let nextSweep = 0;
+  const middleware = (req, res, next) => {
     const now = Date.now();
-    if (hits.size >= SWEEP_AT) {
+    if (hits.size >= sweepAt && now >= nextSweep) {
       for (const [key, entry] of hits) if (entry.resetAt <= now) hits.delete(key);
+      nextSweep = now + windowMs;
     }
     const key = clientKey(req.ip);
     let entry = hits.get(key);
@@ -42,4 +46,7 @@ export function rateLimit({ limit, windowMs }) {
     res.set('Retry-After', String(retryAfter));
     next(new HttpError(429, `Too many requests. Please try again in ${retryAfter} seconds.`));
   };
+  // For tests: how many clients the limiter is tracking right now.
+  middleware.trackedClients = () => hits.size;
+  return middleware;
 }

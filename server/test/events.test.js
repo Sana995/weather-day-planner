@@ -223,4 +223,28 @@ describe('getLiveEvents', () => {
     expect(result.snippet).not.toContain('ticket bot');
     expect(result.snippet.length).toBeLessThanOrEqual(300);
   });
+
+  it('refunds a request SearchApi refused with an HTTP error, so a bad key cannot use up the day', async () => {
+    process.env.SEARCHAPI_DAILY_LIMIT = '1';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fn = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce(ok(PANEL_BODY));
+    vi.stubGlobal('fetch', fn);
+    expect(await getLiveEvents('Maribor', 'SI', '2026-08-09')).toEqual([]);
+    expect(await getLiveEvents('Maribor', 'SI', '2026-08-09')).toHaveLength(2); // key fixed, budget intact
+    expect(fn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('does not refund a timeout or network error, which may still have been billed', async () => {
+    process.env.SEARCHAPI_DAILY_LIMIT = '1';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fn = vi.fn().mockRejectedValueOnce(new Error('The operation was aborted due to timeout'));
+    vi.stubGlobal('fetch', fn);
+    expect(await getLiveEvents('Maribor', 'SI', '2026-08-09')).toEqual([]);
+    expect(await getLiveEvents('Maribor', 'SI', '2026-08-09')).toEqual([]);
+    expect(fn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
 });

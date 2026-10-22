@@ -45,3 +45,10 @@ export function takeDailyBudget(name) {
   used.set(name, { day: today(), count: count + 1 });
   return true;
 }
+
+// Gives back a call the upstream refused outright (an HTTP error it does not
+// bill), so a typo'd key cannot use up the day before it is fixed.
+export function refundDailyBudget(name) {
+  const count = usedToday(name);
+  if (count > 0) used.set(name, { day: today(), count: count - 1 });
+}

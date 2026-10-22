@@ -15,15 +15,19 @@ dotenv.config({ path: path.resolve(fileURLToPath(import.meta.url), '../../../.en
 const RATE_LIMITS = { '/api/recommend': 10, '/api/chat': 10, '/api/weather': 60 };
 const RATE_WINDOW_MS = 60 * 1000;
 
-// The chat's own caps (20 messages of 2,000 characters) fit well inside this.
-const BODY_LIMIT = '64kb';
+// The chat's own caps are 20 messages of 2,000 characters. A character can be
+// up to 3 bytes of UTF-8, so a full chat in Cyrillic or emoji is about 120 KB;
+// this leaves room for that plus JSON escapes and the context object.
+const BODY_LIMIT_KB = 160;
 
-// body-parser errors carry their own status: an oversized body is a 413 and
-// broken JSON a 400, not a crash worth a 500 and a stack trace.
+// body-parser errors carry their own status and a message that is safe to
+// show (expose: true): an oversized body is a 413, broken JSON a 400, an
+// unsupported charset or encoding a 415. None is a crash worth a 500.
 function toHttpError(err) {
   if (err instanceof HttpError) return err;
-  if (err?.type === 'entity.too.large') return new HttpError(413, 'Request body is too large (limit 64 KB).');
+  if (err?.type === 'entity.too.large') return new HttpError(413, `Request body is too large (limit ${BODY_LIMIT_KB} KB).`);
   if (err?.type === 'entity.parse.failed') return new HttpError(400, 'Request body is not valid JSON.');
+  if (err?.expose && err.status >= 400 && err.status < 500) return new HttpError(err.status, err.message);
   return null;
 }
 
@@ -38,7 +42,7 @@ export function createApp() {
   for (const [route, limit] of Object.entries(RATE_LIMITS)) {
     app.use(route, rateLimit({ limit, windowMs: RATE_WINDOW_MS }));
   }
-  app.use(express.json({ limit: BODY_LIMIT }));
+  app.use(express.json({ limit: `${BODY_LIMIT_KB}kb` }));
   app.use(routes);
   // eslint-disable-next-line no-unused-vars -- Express identifies error middleware by arity
   app.use((err, req, res, next) => {
