@@ -222,11 +222,18 @@ tests.
   SearchApi cap the app skips live listings and carries on. Past the Groq
   cap, `/api/recommend` and `/api/chat` answer `429` ("daily AI limit")
   before any lookup runs, so a used-up day costs no SearchApi request
-  either. `0` switches an upstream off.
-- **Request limits:** JSON bodies are capped at 64 KB (`413`), broken JSON
-  gets a `400` rather than a `500`, a city is at most 100 characters (also
-  when the model passes one to a chat tool), and the chat stays at 20
-  messages of 2,000 characters.
+  either. `0` switches an upstream off. A SearchApi request refused with an
+  HTTP error is not billed, so it is given back to the cap; a timeout may
+  have been billed, so it is not. Sunny's `get_attractions` tool does at
+  most one live-events lookup per chat message, however many towns the
+  model asks about. The caps are shared by everyone using the server: they
+  protect the keys' quotas, not fairness between users, so a public
+  deployment would want per-user accounts on top.
+- **Request limits:** JSON bodies are capped at 160 KB (`413`), enough for
+  a full chat of 20 messages of 2,000 characters even in 3-byte characters.
+  Broken JSON gets a `400` and an unsupported charset a `415`, rather than a
+  `500`. A city is at most 100 characters (the form enforces it too, and so
+  does the server when the model passes one to a chat tool).
 - **Tool loop caps** ([`server/src/groq.js`](server/src/groq.js)): at most
   3 tool calls per round and 3 rounds, then one final answer with tools
   turned off. Calls over the per-round cap get a "not run" note instead of
@@ -235,8 +242,11 @@ tests.
   ([`server/src/untrusted.js`](server/src/untrusted.js)): SearchApi
   listings, Wikivoyage guide text and Geoapify place names are flattened to
   one line, stripped of markup and invisible characters, and cut to a
-  length cap. Any sentence that talks to the model ("ignore previous
-  instructions", "SYSTEM:", "you are now ...") is dropped. The prompts then
+  length cap (cut by character, so an emoji is never split). Invisible
+  characters include Unicode tag characters, which can spell out
+  instructions a human cannot see. Any sentence that talks to the model
+  ("ignore all previous instructions", "SYSTEM:", "you are now a ...") is
+  dropped; ordinary guide prose like "you are now in the Old Town" is kept. The prompts then
   put this text inside `<external_data source="...">` blocks, and both
   system prompts tell the model to use it only as facts and never to follow
   instructions found in it. Chat tool results fall under the same rule.
@@ -319,12 +329,12 @@ Testing Library/jsdom) via `npm run test --workspaces --if-present` (the
 `--if-present` flag skips the `shared` workspace, which has no test script
 of its own):
 
-- **Server** — 234 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
+- **Server** — 245 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
   `validate`, `weather`, `routes`, `rateLimit`, `budget`, and `untrusted`
   test files.
-- **Client** — 36 tests across `api`, `WeatherCard`, `Recommendation`,
+- **Client** — 37 tests across `api`, `WeatherCard`, `Recommendation`,
   `WeatherForm`, `ChatPanel`, `ProfileChips`, and `App` test files.
-- **201 tests total, all offline.**
+- **282 tests total, all offline.**
 
 The suite is **fully offline and needs no API keys**: every upstream call
 (`fetch` to OpenWeatherMap/Geoapify/Wikivoyage, the `groq-sdk` client) is
