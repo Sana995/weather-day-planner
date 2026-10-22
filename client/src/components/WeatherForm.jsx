@@ -22,8 +22,9 @@ export default function WeatherForm({ onSubmit, busy }) {
       <div className="field-row">
         <div className="field">
           <label htmlFor="city">City</label>
+          {/* maxLength mirrors the server's 100-character city cap (validate.js). */}
           <input id="city" value={city} onChange={(e) => setCity(e.target.value)}
-            placeholder="e.g. Zagreb" required />
+            placeholder="e.g. Zagreb" maxLength={100} required />
         </div>
         <div className="field">
           <label htmlFor="date">Date</label>

@@ -34,6 +34,11 @@ describe('WeatherForm', () => {
     });
   });
 
+  it('caps the city at the server limit of 100 characters', () => {
+    render(<WeatherForm onSubmit={() => {}} busy={false} />);
+    expect(screen.getByLabelText(/city/i)).toHaveAttribute('maxLength', '100');
+  });
+
   it('disables the submit button while busy', () => {
     render(<WeatherForm onSubmit={() => {}} busy={true} />);
     expect(screen.getByRole('button', { name: /get recommendations/i })).toBeDisabled();
