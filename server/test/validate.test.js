@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDate, validateProfile, PROFILE_OPTIONS, validateChatMessages, validateTraveling, validateIncludeActivities } from '../src/validate.js';
+import { validateCity, parseDate, validateProfile, PROFILE_OPTIONS, validateChatMessages, validateTraveling, validateIncludeActivities } from '../src/validate.js';
 import { HttpError } from '../src/errors.js';
 
 describe('parseDate', () => {
@@ -116,5 +116,21 @@ describe('validateTraveling', () => {
   it('rejects non-boolean values', () => {
     expect(() => validateTraveling('yes')).toThrow(/boolean/);
     expect(() => validateTraveling(1)).toThrow(/boolean/);
+  });
+});
+
+describe('validateCity', () => {
+  it('accepts a city up to 100 characters', () => {
+    expect(validateCity('Zagreb')).toBe('Zagreb');
+    expect(validateCity('Z'.repeat(100))).toHaveLength(100);
+  });
+  it.each([undefined, '', '   ', 42, ['a', 'b'], 'Z'.repeat(101)])('rejects %j with 400', (bad) => {
+    try {
+      validateCity(bad);
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError);
+      expect(err.status).toBe(400);
+    }
   });
 });

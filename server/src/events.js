@@ -9,6 +9,9 @@
 // venue}; snippet items as {title, snippet}. The prompt tells the model to
 // trust only dates the listing itself states.
 
+import { takeDailyBudget } from './budget.js';
+import { cleanText } from './untrusted.js';
+
 const TTL_MS = 10 * 60 * 1000;
 const eventsCache = new Map(); // key → { value, expires }
 
@@ -32,13 +35,21 @@ async function cached(key, fn) {
 
 const SEARCH_API = 'https://www.searchapi.io/api/v1/search';
 const MAX_EVENTS = 8;
+// Per-field caps for web text headed into the prompt.
+const TITLE_MAX = 120;
+const WHEN_MAX = 60;
+const VENUE_MAX = 120;
+const SNIPPET_MAX = 300;
 
 // Throws on non-OK so a dead key or exhausted quota is a failure, not an
 // empty events panel: the caller must not fire the second billable search
 // (the same key would fail again) nor cache the miss as a quiet city. The
 // key rides in the Authorization header, so it never lands in a URL or a log.
-// hl is pinned to 'en', the only language google_events accepts.
+// hl is pinned to 'en', the only language google_events accepts. Every
+// request counts against the daily cap first; a used-up day is a failure like
+// any other, so it degrades to [] and is never cached.
 async function searchApiGet(params, apiKey) {
+  if (!takeDailyBudget('searchapi')) throw new Error('SearchApi daily limit reached');
   const qs = new URLSearchParams({ hl: 'en', ...params });
   const res = await fetch(`${SEARCH_API}?${qs}`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -56,7 +67,8 @@ function monthPhrase(date) {
   return `${d.toLocaleString('en', { month: 'long', timeZone: 'UTC' })} ${d.getUTCFullYear()}`;
 }
 
-const str = (value) => (typeof value === 'string' ? value : '');
+// cleanText also turns a non-string field into ''.
+const str = (value, max) => cleanText(value, max);
 
 // SearchApi's 2026-08 google_events shape: date, start_time and venue are
 // plain strings. start_time ("Aug 26, 7:00 PM") is absolute, while date can
@@ -64,9 +76,9 @@ const str = (value) => (typeof value === 'string' ? value : '');
 // neighbourhood, so it is the venue of last resort.
 function toListing(e) {
   return {
-    title: e.title,
-    when: str(e.start_time) || str(e.date),
-    venue: str(e.venue) || str(e.address),
+    title: str(e.title, TITLE_MAX),
+    when: str(e.start_time, WHEN_MAX) || str(e.date, WHEN_MAX),
+    venue: str(e.venue, VENUE_MAX) || str(e.address, VENUE_MAX),
   };
 }
 
@@ -81,17 +93,19 @@ export async function getLiveEvents(cityName, country = '', date = '') {
   try {
     return await cached(`searchapi:${cityName.trim().toLowerCase()}:${month}`, async () => {
       const panel = await searchApiGet({ engine: 'google_events', q: `Events in ${cityName}`, ...gl }, apiKey);
+      // Cleaned before filtering: a title that was nothing but an instruction
+      // comes out empty and the listing is dropped.
       const listings = (Array.isArray(panel.events) ? panel.events : [])
-        .filter((e) => typeof e?.title === 'string' && e.title)
-        .slice(0, MAX_EVENTS)
-        .map(toListing);
+        .map((e) => toListing(e ?? {}))
+        .filter((e) => e.title)
+        .slice(0, MAX_EVENTS);
       if (listings.length) return listings;
 
       const search = await searchApiGet({ engine: 'google', q: `${cityName} events ${month}`.trim(), ...gl }, apiKey);
       return (Array.isArray(search.organic_results) ? search.organic_results : [])
-        .filter((r) => typeof r?.title === 'string' && r.title && typeof r.snippet === 'string' && r.snippet)
-        .slice(0, 6)
-        .map((r) => ({ title: r.title, snippet: r.snippet }));
+        .map((r) => ({ title: str(r?.title, TITLE_MAX), snippet: str(r?.snippet, SNIPPET_MAX) }))
+        .filter((r) => r.title && r.snippet)
+        .slice(0, 6);
     });
   } catch (err) {
     console.warn(`live events lookup failed for ${cityName}: ${err.message}`);

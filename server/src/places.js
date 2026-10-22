@@ -1,5 +1,8 @@
 // Geoapify + Wikivoyage attractions lookup — entirely optional.
 // Both sources degrade to empty on any failure. 10-minute cache mirrors weather.js.
+// Their text is web content, so it is cleaned (untrusted.js) on the way in.
+
+import { cleanText } from './untrusted.js';
 
 const TTL_MS = 10 * 60 * 1000;
 const placesCache = new Map(); // key → { value, expires }
@@ -30,6 +33,7 @@ const GEO_OUTDOOR = 'tourism.sights,tourism.attraction,leisure.park,natural';
 // luring the LLM into swapping the hike for sightseeing.
 const GEO_NATURE = 'natural,leisure.park';
 const GEO_WET = new Set(['Rain', 'Drizzle', 'Snow', 'Thunderstorm']);
+const POI_NAME_MAX = 100;
 
 export async function getGeoapifyPois(lat, lon, condition, activity) {
   const apiKey = process.env.GEOAPIFY_API_KEY;
@@ -53,7 +57,8 @@ export async function getGeoapifyPois(lat, lon, condition, activity) {
       return (data.features ?? [])
         .map((f) => f.properties)
         .filter((p) => p?.name)
-        .map((p) => ({ name: p.name, categories: p.categories ?? [] }));
+        .map((p) => ({ name: cleanText(p.name, POI_NAME_MAX), categories: p.categories ?? [] }))
+        .filter((p) => p.name);
     });
   } catch (err) {
     console.warn(`geoapify lookup failed: ${err.message}`);
@@ -107,7 +112,7 @@ async function getWikivoyageSections(cityName) {
         const body = await wvGet({
           action: 'parse', page: cityName, redirects: '1', prop: 'text', section: String(sec.index),
         });
-        const text = stripHtml(body.parse?.text?.['*'] ?? '');
+        const text = cleanText(stripHtml(body.parse?.text?.['*'] ?? ''));
         if (text) out[heading] = text;
       }
       return out;

@@ -1,21 +1,14 @@
 import { Router } from 'express';
 import { HttpError } from './errors.js';
-import { parseDate, validateProfile, validateChatMessages, validateTraveling, validateIncludeActivities } from './validate.js';
+import { validateCity, parseDate, validateProfile, validateChatMessages, validateTraveling, validateIncludeActivities } from './validate.js';
 import { getDailySummary } from './weather.js';
 import { getAttractions, getCityEvents } from './places.js';
 import { getLiveEvents } from './events.js';
-import { streamChat, streamChatWithTools, requireGroqKey } from './groq.js';
+import { streamChat, streamChatWithTools, requireGroqKey, requireGroqBudget } from './groq.js';
 import { buildRecommendPrompt, buildChatMessages } from './prompts.js';
 import { CHAT_TOOLS, createToolExecutor, toolLabel } from './chatTools.js';
 
 const router = Router();
-
-// A non-string city (e.g. a repeated query param parsed into an array, or a
-// JSON number/object body) must 400, not crash .trim() into a 500.
-function requireCity(city) {
-  if (typeof city !== 'string' || !city.trim()) throw new HttpError(400, 'city is required');
-  return city;
-}
 
 router.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -24,7 +17,7 @@ router.get('/api/health', (req, res) => {
 router.get('/api/weather', async (req, res, next) => {
   try {
     const { city, date } = req.query;
-    requireCity(city);
+    validateCity(city);
     parseDate(date);
     res.json(await getDailySummary(city, date));
   } catch (err) {
@@ -70,17 +63,20 @@ async function streamToClient(res, events) {
 
 router.post('/api/recommend', async (req, res, next) => {
   try {
-    const { city, date } = req.body;
-    requireCity(city);
+    // No JSON body at all (wrong Content-Type) leaves req.body undefined: a 400, not a crash.
+    const body = req.body ?? {};
+    const { city, date } = body;
+    validateCity(city);
     parseDate(date);
-    const profile = validateProfile(req.body.profile);
-    const traveling = validateTraveling(req.body.traveling);
-    const includeActivities = validateIncludeActivities(req.body.includeActivities);
+    const profile = validateProfile(body.profile);
+    const traveling = validateTraveling(body.traveling);
+    const includeActivities = validateIncludeActivities(body.includeActivities);
     const { city: cityInfo, day } = await getDailySummary(city, date);
     // After the forecast lookup (a bad city must keep its 404), before the
-    // enrichment fetches: a missing key costs no further I/O and arrives as
-    // an actionable JSON 502.
+    // enrichment fetches: a missing key or a used-up daily AI budget costs no
+    // further I/O (no billable SearchApi call) and arrives as plain JSON.
     requireGroqKey();
+    requireGroqBudget();
     // Independent gates: attractions follow their own checkbox (with
     // activities off they feed a standalone "### Attractions" section);
     // events ride along whenever activities are on — festivals matter to
@@ -104,7 +100,7 @@ router.post('/api/recommend', async (req, res, next) => {
 router.post('/api/chat', async (req, res, next) => {
   try {
     const context = req.body?.context ?? {};
-    requireCity(context.city);
+    validateCity(context.city);
     parseDate(context.date);
     const profile = validateProfile(context.profile);
     const traveling = validateTraveling(context.traveling);
@@ -112,6 +108,7 @@ router.post('/api/chat', async (req, res, next) => {
     const { city: cityInfo, day } = await getDailySummary(context.city, context.date);
     // Same ordering contract as /api/recommend.
     requireGroqKey();
+    requireGroqBudget();
 
     const messages = buildChatMessages({ city: cityInfo, day, profile, traveling, history });
     const execute = createToolExecutor({ city: context.city, date: context.date, activity: profile.activity });

@@ -7,8 +7,15 @@ vi.mock('groq-sdk', () => ({
   },
 }));
 
-import { streamChat, streamChatWithTools } from '../src/groq.js';
+import { streamChat, streamChatWithTools, requireGroqBudget } from '../src/groq.js';
 import { HttpError } from '../src/errors.js';
+import { _resetDailyBudgets } from '../src/budget.js';
+
+// Budgets are module state; every test starts on a fresh day's count.
+beforeEach(() => {
+  _resetDailyBudgets();
+  delete process.env.GROQ_DAILY_LIMIT;
+});
 
 function chunk(text) {
   return { choices: [{ delta: { content: text } }] };
@@ -100,6 +107,15 @@ describe('streamChat · Groq error translation and retry', () => {
     for await (const t of streamChat([{ role: 'user', content: 'hi' }])) tokens.push(t);
     return tokens;
   };
+
+  it('counts a retried completion once against the daily cap', async () => {
+    process.env.GROQ_DAILY_LIMIT = '1';
+    createMock
+      .mockRejectedValueOnce(groqError(429, { headers: { 'retry-after': '0' } }))
+      .mockResolvedValueOnce((async function* () { yield chunk('ok'); })());
+    expect(await drain()).toEqual(['ok']);
+    expect(createMock).toHaveBeenCalledTimes(2);
+  });
 
   it('retries a 429 honouring Retry-After, then succeeds', async () => {
     createMock
@@ -243,6 +259,41 @@ describe('streamChatWithTools', () => {
     expect(secondCallMessages.at(-1)).toEqual({ role: 'tool', tool_call_id: 'call_1', content: '{"tempMax":21}' });
   });
 
+  it('runs at most 3 tool calls in one round and answers the rest without running them', async () => {
+    createMock
+      .mockResolvedValueOnce((async function* () {
+        for (let i = 0; i < 5; i++) yield toolChunk(i, `call_${i}`, 'get_weather', `{"city":"C${i}"}`);
+        yield finishChunk('tool_calls');
+      })())
+      .mockResolvedValueOnce((async function* () {
+        yield chunk('Done');
+        yield finishChunk('stop');
+      })());
+    const executeTool = vi.fn().mockResolvedValue('ok');
+    const events = await drain(streamChatWithTools([{ role: 'user', content: 'hi' }], TOOLS, executeTool));
+
+    expect(executeTool).toHaveBeenCalledTimes(3);
+    expect(events.filter((e) => e.type === 'tool').map((e) => e.args.city)).toEqual(['C0', 'C1', 'C2']);
+    // The API needs a tool message for every tool_call id, run or not.
+    const toolMessages = createMock.mock.calls[1][0].messages.filter((m) => m.role === 'tool');
+    expect(toolMessages.map((m) => m.tool_call_id)).toEqual(['call_0', 'call_1', 'call_2', 'call_3', 'call_4']);
+    expect(toolMessages.slice(0, 3).map((m) => m.content)).toEqual(['ok', 'ok', 'ok']);
+    expect(toolMessages.slice(3).every((m) => m.content.startsWith('Not run'))).toBe(true);
+  });
+
+  it('stops a tool loop with a 429 when the daily limit runs out mid-chat', async () => {
+    process.env.GROQ_DAILY_LIMIT = '2';
+    createMock.mockImplementation(() => (async function* () {
+      yield toolChunk(0, 'call_x', 'get_weather', '{"city":"Zagreb"}');
+      yield finishChunk('tool_calls');
+    })());
+    const executeTool = vi.fn().mockResolvedValue('ok');
+    await expect(drain(streamChatWithTools([{ role: 'user', content: 'hi' }], TOOLS, executeTool)))
+      .rejects.toMatchObject({ status: 429, message: expect.stringContaining('daily AI limit') });
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(executeTool).toHaveBeenCalledTimes(2);
+  });
+
   it('caps at 3 tool rounds then forces a final answer without tools', async () => {
     createMock.mockImplementation(({ tools }) => tools
       ? (async function* () {
@@ -368,5 +419,35 @@ describe('streamChatWithTools · text-form tool tags', () => {
     expect(executeTool).toHaveBeenCalledTimes(3); // the final round's tag is dropped
     expect(joinedText(events)).toContain('Done. ');
     expect(joinedText(events)).not.toContain('<function');
+  });
+});
+
+describe('daily Groq budget', () => {
+  beforeEach(() => {
+    createMock.mockReset();
+    process.env.GROQ_API_KEY = 'gsk-test';
+  });
+
+  it('refuses a completion with a curated 429 once GROQ_DAILY_LIMIT is used up', async () => {
+    process.env.GROQ_DAILY_LIMIT = '1';
+    createMock.mockImplementation(() => (async function* () { yield chunk('ok'); })());
+    for await (const _ of streamChat([])) { /* drain */ }
+    await expect(async () => {
+      for await (const _ of streamChat([])) { /* drain */ }
+    }).rejects.toMatchObject({ status: 429, message: expect.stringContaining('daily AI limit') });
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('requireGroqBudget passes while calls remain and throws the same 429 after', async () => {
+    process.env.GROQ_DAILY_LIMIT = '1';
+    expect(() => requireGroqBudget()).not.toThrow();
+    createMock.mockImplementation(() => (async function* () {})());
+    for await (const _ of streamChat([])) { /* drain */ }
+    expect(() => requireGroqBudget()).toThrow(HttpError);
+    try {
+      requireGroqBudget();
+    } catch (err) {
+      expect(err.status).toBe(429);
+    }
   });
 });

@@ -4,6 +4,19 @@ import { HttpError } from './errors.js';
 // Re-export so server code and tests keep one import site for profile enums.
 export { PROFILE_OPTIONS };
 
+export const CITY_MAX_CHARS = 100;
+
+// A non-string city (e.g. a repeated query param parsed into an array, or a
+// JSON number/object body) must 400, not crash .trim() into a 500. The length
+// cap keeps a pasted essay out of upstream URLs and the prompt.
+export function validateCity(city) {
+  if (typeof city !== 'string' || !city.trim()) throw new HttpError(400, 'city is required');
+  if (city.length > CITY_MAX_CHARS) {
+    throw new HttpError(400, `city cannot exceed ${CITY_MAX_CHARS} characters`);
+  }
+  return city;
+}
+
 export function parseDate(str) {
   if (typeof str !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(str)) {
     throw new HttpError(400, `date must be YYYY-MM-DD, got "${str}"`);

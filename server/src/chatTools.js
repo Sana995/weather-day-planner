@@ -4,6 +4,7 @@
 import { getDailySummary, getForecast } from './weather.js';
 import { getAttractions, getCityEvents } from './places.js';
 import { getLiveEvents } from './events.js';
+import { validateCity, CITY_MAX_CHARS } from './validate.js';
 
 export const CHAT_TOOLS = [
   {
@@ -48,14 +49,15 @@ export function createToolExecutor(context) {
   return async function execute(name, args) {
     try {
       if (name === 'get_weather') {
-        const city = argCity(args, context.city);
+        // The model writes these args, so they get the same cap as a request.
+        const city = validateCity(argCity(args, context.city));
         const date = typeof args?.date === 'string' && args.date ? args.date : context.date;
         const { city: cityInfo, day } = await getDailySummary(city, date);
         const { entries, ...summary } = day;
         return JSON.stringify({ city: `${cityInfo.name}, ${cityInfo.country}`, ...summary });
       }
       if (name === 'get_attractions') {
-        const city = argCity(args, context.city);
+        const city = validateCity(argCity(args, context.city));
         const { city: cityInfo, days } = await getForecast(city);
         const [{ pois, guide }, events, liveEvents] = await Promise.all([
           getAttractions(cityInfo.name, cityInfo.coord, days[0].condition, context.activity),
@@ -72,7 +74,8 @@ export function createToolExecutor(context) {
 }
 
 export function toolLabel(name, args) {
-  const place = argCity(args, 'that place');
+  const city = argCity(args, 'that place');
+  const place = city.length > CITY_MAX_CHARS ? 'that place' : city;
   if (name === 'get_weather') return `Sunny is checking the forecast for ${place}…`;
   if (name === 'get_attractions') return `Sunny is looking up attractions around ${place}…`;
   return 'Sunny is working on it…';
