@@ -182,8 +182,10 @@ One lookup, per city and month:
    `q=<city> events <Month YYYY>`. Up to 6 `organic_results` with a snippet
    become `{title, snippet}`; venue calendars and ticket sites put real
    dates in those snippets.
-3. **Into the prompt.** The listings reach the model in their own block,
-   and the system prompt allows only dates a listing itself states. Sunny's
+3. **Into the prompt.** Each field is cleaned and length-capped (see
+   [Guardrails](#guardrails)), the listings reach the model inside an
+   `<external_data source="SearchApi">` block, and the system prompt allows
+   only dates a listing itself states. Sunny's
    `get_attractions` chat tool returns the same listings as `liveEvents`.
 
 Behaviour around it:
@@ -197,7 +199,47 @@ Behaviour around it:
   fallback search is skipped, since the same key would fail again and
   waste a billable request. Failures are never cached, so the next request
   retries.
-- **Cost:** a lookup costs one request, or two when the fallback runs.
+- **Cost:** a lookup costs one request, or two when the fallback runs,
+  and `SEARCHAPI_DAILY_LIMIT` caps the requests per day (default 20).
+
+## Guardrails
+
+The server is built to sit in front of real keys safely. Like the caches,
+everything here is in memory and per process, and each piece has offline
+tests.
+
+- **Per-client rate limits** ([`server/src/rateLimit.js`](server/src/rateLimit.js)):
+  10 requests a minute on `POST /api/recommend` and `POST /api/chat`, 60 on
+  `GET /api/weather`. Over the limit the server answers `429` with a
+  `Retry-After` header and a JSON error, before it parses the body. IPv6
+  clients are counted per /64. Behind a reverse proxy, set `TRUST_PROXY` to
+  the number of proxies so the limits see real client addresses; without it
+  `X-Forwarded-For` is ignored, so a client cannot fake its way past the
+  limit.
+- **Daily caps on paid calls** ([`server/src/budget.js`](server/src/budget.js)):
+  at most `SEARCHAPI_DAILY_LIMIT` SearchApi requests (default 20) and
+  `GROQ_DAILY_LIMIT` Groq completions (default 300) per UTC day. Past the
+  SearchApi cap the app skips live listings and carries on. Past the Groq
+  cap, `/api/recommend` and `/api/chat` answer `429` ("daily AI limit")
+  before any lookup runs, so a used-up day costs no SearchApi request
+  either. `0` switches an upstream off.
+- **Request limits:** JSON bodies are capped at 64 KB (`413`), broken JSON
+  gets a `400` rather than a `500`, a city is at most 100 characters (also
+  when the model passes one to a chat tool), and the chat stays at 20
+  messages of 2,000 characters.
+- **Tool loop caps** ([`server/src/groq.js`](server/src/groq.js)): at most
+  3 tool calls per round and 3 rounds, then one final answer with tools
+  turned off. Calls over the per-round cap get a "not run" note instead of
+  being executed.
+- **Web text is data, not instructions**
+  ([`server/src/untrusted.js`](server/src/untrusted.js)): SearchApi
+  listings, Wikivoyage guide text and Geoapify place names are flattened to
+  one line, stripped of markup and invisible characters, and cut to a
+  length cap. Any sentence that talks to the model ("ignore previous
+  instructions", "SYSTEM:", "you are now ...") is dropped. The prompts then
+  put this text inside `<external_data source="...">` blocks, and both
+  system prompts tell the model to use it only as facts and never to follow
+  instructions found in it. Chat tool results fall under the same rule.
 
 ## Design
 
@@ -249,6 +291,8 @@ cp .env.example .env       # then fill in your keys
 defaults to `openai/gpt-oss-120b`), `GEOAPIFY_API_KEY` (optional POI
 grounding) and `SEARCHAPI_API_KEY` (optional live event listings; both
 degrade silently to nothing when empty), plus `PORT` (defaults to `3001`).
+The optional guardrail settings `GROQ_DAILY_LIMIT`, `SEARCHAPI_DAILY_LIMIT`
+and `TRUST_PROXY` are explained under [Guardrails](#guardrails).
 
 `.env` is git-ignored — never commit real keys.
 
@@ -275,8 +319,9 @@ Testing Library/jsdom) via `npm run test --workspaces --if-present` (the
 `--if-present` flag skips the `shared` workspace, which has no test script
 of its own):
 
-- **Server** — 165 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
-  `validate`, `weather`, and `routes` test files.
+- **Server** — 234 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
+  `validate`, `weather`, `routes`, `rateLimit`, `budget`, and `untrusted`
+  test files.
 - **Client** — 36 tests across `api`, `WeatherCard`, `Recommendation`,
   `WeatherForm`, `ChatPanel`, `ProfileChips`, and `App` test files.
 - **201 tests total, all offline.**

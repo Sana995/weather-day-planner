@@ -110,3 +110,21 @@ describe('toolLabel', () => {
     expect(toolLabel('get_weather', {})).toMatch(/forecast/);
   });
 });
+
+describe('tool arguments the model writes', () => {
+  beforeEach(() => { getDailySummary.mockReset(); getForecast.mockReset(); });
+
+  it('rejects an over-long city as a tool error without any lookup', async () => {
+    const execute = createToolExecutor(CTX);
+    for (const name of ['get_weather', 'get_attractions']) {
+      const out = await execute(name, { city: 'Z'.repeat(101) });
+      expect(out).toBe('Tool error: city cannot exceed 100 characters');
+    }
+    expect(getDailySummary).not.toHaveBeenCalled();
+    expect(getForecast).not.toHaveBeenCalled();
+  });
+
+  it('keeps an over-long city out of the status label', () => {
+    expect(toolLabel('get_weather', { city: 'Z'.repeat(101) })).toBe('Sunny is checking the forecast for that place…');
+  });
+});

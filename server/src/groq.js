@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
 import { HttpError } from './errors.js';
+import { hasDailyBudget, takeDailyBudget } from './budget.js';
 
 // Groq shut llama-3.3-70b-versatile down on 2026-08-16 and named this as its
 // replacement: a production model with tool calling.
@@ -41,6 +42,16 @@ export function requireGroqKey() {
   return apiKey;
 }
 
+const dailyLimitError = () =>
+  new HttpError(429, 'This app has used up its daily AI limit. Please try again tomorrow.');
+
+// Routes call this next to requireGroqKey, before the enrichment lookups, so
+// a used-up day costs no SearchApi request either. createChatStream does the
+// actual counting.
+export function requireGroqBudget() {
+  if (!hasDailyBudget('groq')) throw dailyLimitError();
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAX_ATTEMPTS = 3;
@@ -72,7 +83,9 @@ function translateGroqError(err) {
 // delays never stack): transient failures — 429, connection drops, 5xx —
 // get up to MAX_ATTEMPTS, a 429 honouring Retry-After when it fits an
 // interactive request; everything else surfaces immediately.
+// One completion is one unit of the daily cap however many retries it takes.
 async function createChatStream(groq, params) {
+  if (!takeDailyBudget('groq')) throw dailyLimitError();
   for (let attempt = 0; ; attempt++) {
     try {
       return await groq.chat.completions.create(params);
@@ -162,6 +175,9 @@ function createTagFilter() {
 }
 
 const MAX_TOOL_ROUNDS = 3;
+// Each tool call can fan out into several upstream lookups, so one round may
+// only run this many; the rest are answered with a note instead of executed.
+const MAX_TOOL_CALLS_PER_ROUND = 3;
 
 // Yields {type:'token', text} and {type:'tool', name, args}. Runs up to
 // MAX_TOOL_ROUNDS tool rounds, then one final round with tools disabled so a
@@ -227,8 +243,16 @@ export async function* streamChatWithTools(messages, tools, executeTool) {
       })),
     });
     const parsed = calls.map((c) => ({ ...c, parsedArgs: safeParse(c.args) }));
-    for (const c of parsed) yield { type: 'tool', name: c.name, args: c.parsedArgs };
-    const results = await Promise.all(parsed.map((c) => executeTool(c.name, c.parsedArgs)));
-    parsed.forEach((c, i) => convo.push({ role: 'tool', tool_call_id: c.id, content: results[i] }));
+    const run = parsed.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    for (const c of run) yield { type: 'tool', name: c.name, args: c.parsedArgs };
+    const results = await Promise.all(run.map((c) => executeTool(c.name, c.parsedArgs)));
+    // Every tool_call id still gets a tool message, as the API requires.
+    parsed.forEach((c, i) => convo.push({
+      role: 'tool',
+      tool_call_id: c.id,
+      content: i < run.length
+        ? results[i]
+        : `Not run: at most ${MAX_TOOL_CALLS_PER_ROUND} tool calls per round.`,
+    }));
   }
 }
