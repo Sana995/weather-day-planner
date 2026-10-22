@@ -324,7 +324,7 @@ of its own):
   test files.
 - **Client** — 36 tests across `api`, `WeatherCard`, `Recommendation`,
   `WeatherForm`, `ChatPanel`, `ProfileChips`, and `App` test files.
-- **270 tests total.**
+- **201 tests total, all offline.**
 
 The suite is **fully offline and needs no API keys**: every upstream call
 (`fetch` to OpenWeatherMap/Geoapify/Wikivoyage, the `groq-sdk` client) is
