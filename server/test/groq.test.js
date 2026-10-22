@@ -31,17 +31,35 @@ describe('streamChat', () => {
     for await (const t of streamChat([{ role: 'user', content: 'hi' }])) tokens.push(t);
     expect(tokens).toEqual(['Hello', ' world']);
     expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'llama-3.3-70b-versatile', stream: true,
-      max_tokens: expect.any(Number),
+      model: 'openai/gpt-oss-120b', stream: true,
+      max_completion_tokens: expect.any(Number),
       messages: [{ role: 'user', content: 'hi' }],
     }));
   });
 
   it('honors GROQ_MODEL override', async () => {
-    process.env.GROQ_MODEL = 'llama-3.1-8b-instant';
+    process.env.GROQ_MODEL = 'openai/gpt-oss-20b';
     createMock.mockResolvedValue((async function* () {})());
     for await (const _ of streamChat([])) { /* drain */ }
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ model: 'llama-3.1-8b-instant' }));
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-oss-20b' }));
+  });
+
+  it('asks gpt-oss for low reasoning effort and no reasoning text', async () => {
+    createMock.mockResolvedValue((async function* () {})());
+    for await (const _ of streamChat([])) { /* drain */ }
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({
+      reasoning_effort: 'low', include_reasoning: false,
+    }));
+  });
+
+  it('sends no gpt-oss reasoning fields to another model family', async () => {
+    process.env.GROQ_MODEL = 'qwen/qwen3.8-27b';
+    createMock.mockResolvedValue((async function* () {})());
+    for await (const _ of streamChat([])) { /* drain */ }
+    const params = createMock.mock.calls[0][0];
+    expect(params.model).toBe('qwen/qwen3.8-27b');
+    expect(params).not.toHaveProperty('reasoning_effort');
+    expect(params).not.toHaveProperty('include_reasoning');
   });
 
   it('throws HttpError 502 before any call when GROQ_API_KEY is unset', async () => {
@@ -191,7 +209,8 @@ describe('streamChatWithTools', () => {
     expect(events).toEqual([{ type: 'token', text: 'Hello' }]);
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(createMock.mock.calls[0][0].tools).toEqual(TOOLS);
-    expect(createMock.mock.calls[0][0].max_tokens).toEqual(expect.any(Number));
+    expect(createMock.mock.calls[0][0].max_completion_tokens).toEqual(expect.any(Number));
+    expect(createMock.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-oss-120b', reasoning_effort: 'low' });
   });
 
   it('runs a tool round (args split across chunks) then streams the final answer', async () => {

@@ -219,8 +219,11 @@ Behaviour around it:
     **Fresh keys can take up to ~2 hours to activate** — if the server logs
     `OpenWeatherMap rejected the API key`, this is almost always why; just
     wait and retry, no code or config change needed.
-  - **Groq** — <https://console.groq.com/keys> (free tier). Defaults to the
-    `llama-3.3-70b-versatile` model unless `GROQ_MODEL` is overridden.
+  - **Groq** — <https://console.groq.com/keys> (free tier). Defaults to
+    `openai/gpt-oss-120b` unless `GROQ_MODEL` is overridden: a production
+    model with tool calling, and Groq's named replacement for
+    `llama-3.3-70b-versatile`, which it retired on 2026-08-16. The server
+    asks it for low reasoning effort, so answers start streaming quickly.
   - **Geoapify** (optional) — <https://myprojects.geoapify.com/>. Powers
     the real-attractions list in traveling mode; the app works fully
     without it — leave `GEOAPIFY_API_KEY` empty and traveling mode falls
@@ -243,7 +246,7 @@ cp .env.example .env       # then fill in your keys
 
 `.env.example` (repo root) lists the variables to fill in:
 `OPENWEATHER_API_KEY` and `GROQ_API_KEY` (required), `GROQ_MODEL` (optional,
-defaults to `llama-3.3-70b-versatile`), `GEOAPIFY_API_KEY` (optional POI
+defaults to `openai/gpt-oss-120b`), `GEOAPIFY_API_KEY` (optional POI
 grounding) and `SEARCHAPI_API_KEY` (optional live event listings; both
 degrade silently to nothing when empty), plus `PORT` (defaults to `3001`).
 
@@ -272,11 +275,11 @@ Testing Library/jsdom) via `npm run test --workspaces --if-present` (the
 `--if-present` flag skips the `shared` workspace, which has no test script
 of its own):
 
-- **Server** — 163 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
+- **Server** — 165 tests across `places`, `events`, `prompts`, `chatTools`, `groq`,
   `validate`, `weather`, and `routes` test files.
 - **Client** — 36 tests across `api`, `WeatherCard`, `Recommendation`,
   `WeatherForm`, `ChatPanel`, `ProfileChips`, and `App` test files.
-- **199 tests total.**
+- **201 tests total.**
 
 The suite is **fully offline and needs no API keys**: every upstream call
 (`fetch` to OpenWeatherMap/Geoapify/Wikivoyage, the `groq-sdk` client) is

@@ -1,11 +1,26 @@
 import Groq from 'groq-sdk';
 import { HttpError } from './errors.js';
 
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+// Groq shut llama-3.3-70b-versatile down on 2026-08-16 and named this as its
+// replacement: a production model with tool calling.
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 // The prompts cap the answer in words; this caps it in tokens, so a model
-// that ignores the prompt still cannot stream unboundedly.
-const MAX_TOKENS = 1024;
+// that ignores the prompt still cannot stream unboundedly. gpt-oss reasons
+// before it answers and those tokens count against the same cap, so it
+// leaves room for both.
+const MAX_TOKENS = 2048;
+
+// gpt-oss thinks before answering: low effort keeps the wait before the
+// first streamed token short, and the reasoning text is left out of the
+// response because only the answer is shown. reasoning_effort 'low' is
+// gpt-oss only, so a GROQ_MODEL override to another family gets neither.
+function modelParams() {
+  const model = process.env.GROQ_MODEL || DEFAULT_MODEL;
+  return model.startsWith('openai/gpt-oss')
+    ? { model, reasoning_effort: 'low', include_reasoning: false }
+    : { model };
+}
 
 // The cap is a backstop, not a feature: when it trips, the cut must be
 // visible. Thrown after the tokens have streamed, so the route reports the
@@ -77,11 +92,11 @@ async function createChatStream(groq, params) {
 export async function* streamChat(messages) {
   const groq = new Groq({ apiKey: requireGroqKey(), maxRetries: 0 });
   const stream = await createChatStream(groq, {
-    model: process.env.GROQ_MODEL || DEFAULT_MODEL,
+    ...modelParams(),
     messages,
     stream: true,
     temperature: 0.7,
-    max_tokens: MAX_TOKENS,
+    max_completion_tokens: MAX_TOKENS,
   });
   let finish = null;
   for await (const chunk of stream) {
@@ -159,11 +174,11 @@ export async function* streamChatWithTools(messages, tools, executeTool) {
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const useTools = round < MAX_TOOL_ROUNDS;
     const stream = await createChatStream(groq, {
-      model: process.env.GROQ_MODEL || DEFAULT_MODEL,
+      ...modelParams(),
       messages: convo,
       stream: true,
       temperature: 0.7,
-      max_tokens: MAX_TOKENS,
+      max_completion_tokens: MAX_TOKENS,
       ...(useTools ? { tools, tool_choice: 'auto' } : {}),
     });
 
