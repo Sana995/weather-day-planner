@@ -1,5 +1,7 @@
 # Personal Weather Assistant
 
+[![CI](https://github.com/Sana995/weather-day-planner/actions/workflows/ci.yml/badge.svg)](https://github.com/Sana995/weather-day-planner/actions/workflows/ci.yml)
+
 Personal Weather Assistant is a small full-stack app that turns a live weather
 forecast into personalized, streamed advice. Enter a city, a date, and a short
 profile (activity, cold tolerance, heat tolerance), and the assistant streams
@@ -339,7 +341,9 @@ of its own):
 The suite is **fully offline and needs no API keys**: every upstream call
 (`fetch` to OpenWeatherMap/Geoapify/Wikivoyage, the `groq-sdk` client) is
 mocked or stubbed at the module boundary, so `npm test` works identically
-with an empty `.env` or no `.env` at all.
+with an empty `.env` or no `.env` at all. GitHub Actions
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same suite
+and the client build on every push to `main` and every pull request.
 
 ## API examples
 
